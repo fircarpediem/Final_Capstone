@@ -1,0 +1,205 @@
+# RoadBuddy Winning Architecture Configuration
+
+# Project Settings
+project:
+  name: "roadbuddy_winning"
+  version: "1.0.0"
+  seed: 42
+  device: "cuda"  # cuda, cpu, mps
+
+# Paths
+paths:
+  data_dir: "data"
+  raw_data: "data/raw"
+  processed_data: "data/processed"
+  knowledge_base: "data/knowledge_base"
+  checkpoints: "checkpoints"
+  outputs: "outputs"
+  logs: "logs"
+
+# Data Configuration
+data:
+  train_json: "traffic_buddy_train+public_test/train/train.json"
+  public_test_json: "traffic_buddy_train+public_test/public_test/public_test.json"
+  private_test_json: "traffic_buddy_private_test/private_test.json"
+  video_dir: "videos"
+  
+  # Video Processing
+  target_fps: 2
+  max_frames_global: 32
+  num_keyframes: 3
+  global_resolution: [480, 270]  # width, height
+  native_resolution: [1920, 1080]
+  
+  # Augmentation
+  augmentation:
+    enabled: true
+    brightness_range: [0.8, 1.2]
+    contrast_range: [0.8, 1.2]
+    rotation_limit: 5
+    blur_prob: 0.3
+    noise_prob: 0.2
+
+# Model Configuration
+model:
+  # Core VLM - Choose model or ensemble
+  vlm:
+    mode: "single"  # single, ensemble
+    primary_model: "qwen2vl"  # qwen2vl, internvl2
+    
+    # Qwen2-VL Configuration
+    qwen2vl:
+      name: "Qwen/Qwen2-VL-7B-Instruct"
+      dtype: "bfloat16"  # float16, bfloat16, float32
+      load_in_8bit: false
+      load_in_4bit: false
+      use_flash_attention: true
+      weight: 0.5  # For ensemble mode
+    
+    # InternVL2 Configuration
+    internvl2:
+      name: "OpenGVLab/InternVL2-8B"
+      dtype: "bfloat16"
+      load_in_8bit: false
+      load_in_4bit: false
+      use_flash_attention: true
+      weight: 0.5  # For ensemble mode
+    
+  # LoRA Configuration
+  lora:
+    enabled: true
+    r: 64
+    lora_alpha: 16
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    lora_dropout: 0.05
+    bias: "none"
+    task_type: "CAUSAL_LM"
+  
+  # Expert Modules
+  experts:
+    # Object Detection
+    detector:
+      model: "yolov10x"  # yolov8x, yolov9, yolov10x
+      weights: "checkpoints/yolov10_traffic_vn.pt"
+      conf_threshold: 0.3
+      iou_threshold: 0.5
+      classes:
+        - "prohibitory_sign"
+        - "warning_sign"
+        - "mandatory_sign"
+        - "guide_sign"
+        - "supplementary_sign"
+        - "traffic_light"
+        - "car"
+        - "motorcycle"
+        - "truck"
+        - "bus"
+        - "pedestrian"
+        - "lane_marking"
+    
+    # OCR Ensemble
+    ocr:
+      ensemble_method: "voting"  # voting, weighted, confidence
+      models:
+        - "vietocr"
+        - "paddleocr"
+        - "easyocr"
+      preprocessing:
+        denoise: true
+        sharpen: true
+        adaptive_threshold: true
+    
+    # Knowledge Base
+    knowledge_base:
+      encoder: "keepitreal/vietnamese-sbert"
+      top_k: 3
+      min_similarity: 0.5
+      law_database: "data/knowledge_base/vietnam_traffic_laws.json"
+
+# Training Configuration
+training:
+  # Basic Settings
+  num_epochs: 5
+  batch_size: 2
+  gradient_accumulation_steps: 8
+  effective_batch_size: 16  # batch_size * gradient_accumulation_steps
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    learning_rate: 2.0e-4
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+  
+  # Learning Rate Scheduler
+  scheduler:
+    type: "cosine"  # linear, cosine, polynomial
+    warmup_steps: 100
+    warmup_ratio: 0.1
+  
+  # Gradient & Memory
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  mixed_precision: "bf16"  # no, fp16, bf16
+  
+  # Logging & Saving
+  logging_steps: 10
+  eval_steps: 500
+  save_steps: 500
+  save_total_limit: 3
+  
+  # Early Stopping
+  early_stopping:
+    enabled: true
+    patience: 3
+    metric: "accuracy"
+
+# Inference Configuration
+inference:
+  batch_size: 1
+  max_new_tokens: 20
+  do_sample: false
+  temperature: 0.0
+  top_p: 1.0
+  num_beams: 1
+  
+  # Post-processing
+  post_processing:
+    enabled: true
+    validate_with_ocr: true
+    validate_with_kb: true
+    confidence_threshold: 0.8
+
+# Evaluation Metrics
+evaluation:
+  metrics:
+    - "accuracy"
+    - "f1_score"
+    - "precision"
+    - "recall"
+  
+  per_question_type: true
+  confusion_matrix: true
+
+# Logging & Monitoring
+logging:
+  use_wandb: true
+  wandb_project: "roadbuddy-winning"
+  wandb_entity: null  # Your wandb username
+  use_tensorboard: true
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# Hardware & Performance
+performance:
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  persistent_workers: true
+  
+  # Multi-GPU
+  distributed:
+    enabled: false
+    backend: "nccl"
+    world_size: 1
+    local_rank: 0
